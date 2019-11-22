@@ -14,6 +14,7 @@ import pyrealsense2 as rs
 import select
 import socket
 import struct
+import pickle
 
 
 def sample(probs):
@@ -236,7 +237,10 @@ def runOnVideo(net, meta, vid_source):
 
     }
 
-    ANOTHER_COM = ""
+    RECEIVER_IP = "127.0.0.1"
+    RECEIVER_PORT = 12345
+
+    s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
     pipeline = rs.pipeline()
     config = rs.config()
@@ -262,7 +266,7 @@ def runOnVideo(net, meta, vid_source):
 
             #print(depth_image.shape)
 
-            r = detect(net, meta, color_image, thresh=0.5, hier_thresh=0.5, nms=0.45)
+            r = detect(net, meta, color_image, thresh=0.75, hier_thresh=0.5, nms=0.45)
             #print(r)
             
             # Detect something
@@ -277,13 +281,20 @@ def runOnVideo(net, meta, vid_source):
                     #print("className",className)
                     
                     if className == 'person':
-
-                        cv2.rectangle(color_image,( int(r[i][2][0]-r[i][2][2]/2), int(r[i][2][1]-r[i][2][3]/2)), (int(r[i][2][0]+r[i][2][2]/2), int(r[i][2][1]+r[i][2][3]/2)), (255,0,0), 2)
+                        x = int(r[i][2][0]-r[i][2][2]/2)
+                        y = int(r[i][2][1]-r[i][2][3]/2)
+                        w = int(r[i][2][0]+r[i][2][2]/2)
+                        h = int(r[i][2][1]+r[i][2][3]/2)
+                        cv2.rectangle(color_image, (x, y), (w, h), (255,0,0), 2)
                         detectedOnFrame = (int(r[i][2][0]),int(r[i][2][1]))
                         Depth = depth_frame.get_distance(detectedOnFrame[0],detectedOnFrame[1])
                         #print(className + ' ' + str(Depth))
                         bbox_data['nboxes'] = i+1
                         bbox_data['distance'][i] = round(Depth,6)
+                        tag = "ID: " + str(bbox_data['nboxes']) + "   Distance:" + str(bbox_data['distance'][i])
+                        #putText on bbox
+                        cv2.putText(color_image, tag,(x,y-10),cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,0,0), 2)
+                        # Find the closest to print on screen
                         if np.max(bbox_data['distance'])>0:
                             closestDist = np.min(bbox_data['distance'][np.nonzero(bbox_data['distance'])])
                         else:
@@ -296,8 +307,12 @@ def runOnVideo(net, meta, vid_source):
                         pass
                     
                     #cv2.imshow("Detected!", color_image)
+
+            #depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+            #combineImages = np.hstack((color_image,depth_colormap))
             cv2.putText(color_image, str(round(closestDist,3)), (10, 450), cv2.FONT_HERSHEY_COMPLEX, 3, (0, 0, 0), 12, lineType=cv2.LINE_AA)    
             cv2.putText(color_image, str(round(closestDist,3)), (10, 450), cv2.FONT_HERSHEY_COMPLEX, 3, (255, 255, 255), 8, lineType=cv2.LINE_AA)
+            
             cv2.imshow("Detected!", color_image)
             print("bbox_data['nboxes']", bbox_data['nboxes'])
             print("bbox_data['distance']",bbox_data['distance'])
@@ -306,6 +321,8 @@ def runOnVideo(net, meta, vid_source):
 
             ##############
             # send out via UDP
+            udpPacket = pickle.dumps(bbox_data)
+            s.sendto(udpPacket,(RECEIVER_IP,RECEIVER_PORT))
             ##############
 
             # clear data off the array after send out via UDP
